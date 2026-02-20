@@ -68,3 +68,12 @@ async def main_engine():
 
 if __name__ == "__main__":
     asyncio.run(main_engine())
+# Bot commands handler (Add this inside main_engine)
+from telegram.ext import Application, CommandHandler
+
+async def start(update, context):
+    await update.message.reply_text("🛡️ Sentinel V11 Active! I am monitoring Gold & BTC news for you.")
+
+# Use this to handle commands
+application = Application.builder().token(TOKEN).build()
+application.add_handler(CommandHandler("start", start))
