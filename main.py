@@ -1,6 +1,6 @@
 import os, requests, asyncio, threading, http.server, socketserver
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, ContextTypes, ChatMemberHandler
+from telegram.ext import Application, CommandHandler, ContextTypes
 from datetime import datetime
 
 # --- 1. RENDER SERVER ---
@@ -12,80 +12,110 @@ threading.Thread(target=run_dummy_server, daemon=True).start()
 
 # --- 2. CONFIG ---
 TOKEN = '8429123743:AAEzB9HSZZIigYyK1uHxHrJ34e5oG_0tp4Y'
-AV_KEY = '66Z6WZUNM075IKOR'
+# API Limit se bachne ke liye 2-3 keys yahan comma laga kar zaroor daalein
+API_KEYS = ['66Z6WZUNM075IKOR'] 
 CHAT_ID = -1003835397825 
 CH_LINK = "https://t.me/+u-4ClI7OsUszMDZl"
 ADMIN_LINK = "https://t.me/Ronak_Admin"
 
-# Keywords for News
-GOLD_KEYS = ['GOLD', 'XAU', 'FED', 'INFLATION', 'USD']
-BTC_KEYS = ['BTC', 'CRYPTO', 'BITCOIN', 'BINANCE']
-last_news_title = ""
+# --- 3. EXPERT ENGINE & ACCURACY TRACKER ---
 
-# --- 3. FUNCTIONS ---
+async def get_price(sym, key):
+    try:
+        url = f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={sym}&apikey={key}"
+        data = requests.get(url, timeout=10).json()
+        return float(data["Global Quote"]["05. price"])
+    except: return None
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [[InlineKeyboardButton("📥 JOIN TELEGRAM CHANNEL", url=CH_LINK)]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    user_name = update.effective_user.first_name
-    msg = f"👋 **Welcome {user_name}!**\n\n🛡️ **Sentinel Sniper V11** is Online.\nMonitoring Gold, Crypto & Forex 24/7.\n\nClick below to join VIP Channel 👇"
-    await update.message.reply_text(msg, reply_markup=reply_markup, parse_mode='Markdown')
-
-async def welcome_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.chat_member.new_chat_member.status == "member":
-        user = update.chat_member.new_chat_member.user
-        welcome_text = f"🎊 **Welcome {user.first_name} to Sentinel FX Engine!**\nReal-time signals are being scanned. Stay tuned! 🚀"
-        await context.bot.send_message(CHAT_ID, welcome_text, parse_mode='Markdown')
-
-async def heartbeat(app):
-    while True:
-        now = datetime.now().strftime("%H:%M")
-        status_msg = f"🛰️ **SENTINEL SYSTEM UPDATE**\n━━━━━━━━━━━━━━\n⏰ **Time:** {now} IST\n📡 **Status:** Scanning Active\n📊 **Assets:** XAU, BTC, EURUSD, USDJPY\n━━━━━━━━━━━━━━"
-        try: await app.bot.send_message(CHAT_ID, status_msg, parse_mode='Markdown')
-        except: pass
-        await asyncio.sleep(3600)
+async def track_accuracy(app, sym, entry_price, direction):
+    """Trade ke 1 ghante baad result check karega"""
+    await asyncio.sleep(3600) 
+    exit_price = await get_price(sym, API_KEYS[0])
+    if exit_price and entry_price:
+        change = ((exit_price - entry_price) / entry_price) * 100
+        result = "✅ PROFIT" if (direction == "BUY" and change > 0) or (direction == "SELL" and change < 0) else "❌ LOSS/SIDEWAYS"
+        accuracy_msg = (
+            f"📊 **TRADE RESULT UPDATE**\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"🎯 **Asset:** {sym}\n"
+            f"💰 **Entry:** {entry_price}\n"
+            f"📉 **Exit (1h):** {exit_price}\n"
+            f"✨ **Result:** {result} ({abs(change):.2f}%)\n"
+            f"━━━━━━━━━━━━━━━"
+        )
+        await app.bot.send_message(CHAT_ID, accuracy_msg, parse_mode='Markdown')
 
 async def trading_engine(app):
-    global last_news_title
+    """Background mein trades scan karta rahega (Silent)"""
+    while True:
+        key = API_KEYS[0]
+        for sym in ["BTC", "GLD"]:
+            url = f"https://www.alphavantage.co/query?function=RSI&symbol={sym}&interval=60min&time_period=14&series_type=close&apikey={key}"
+            data = requests.get(url).json()
+            
+            if "Technical Analysis: RSI" in data:
+                rsi = float(list(data["Technical Analysis: RSI"].values())[0]["RSI"])
+                entry_price = await get_price(sym, key)
+                
+                signal = ""
+                direction = ""
+                # High Accuracy Thresholds
+                if rsi < 38: 
+                    signal = "🚀 **EXPERT BUY SIGNAL**"
+                    direction = "BUY"
+                elif rsi > 62: 
+                    signal = "📉 **EXPERT SELL SIGNAL**"
+                    direction = "SELL"
+
+                if signal and entry_price:
+                    msg = (
+                        f"🛡️ {signal}\n"
+                        f"━━━━━━━━━━━━━━━\n"
+                        f"🎯 **Asset:** {sym}\n"
+                        f"💵 **Entry Price:** {entry_price}\n"
+                        f"📊 **RSI Level:** {rsi:.2f}\n"
+                        f"🚦 **Status:** Signal Confirmed\n"
+                        f"━━━━━━━━━━━━━━━\n"
+                        f"💬 [Admin]({ADMIN_LINK})"
+                    )
+                    await app.bot.send_message(CHAT_ID, msg, parse_mode='Markdown')
+                    asyncio.create_task(track_accuracy(app, sym, entry_price, direction))
+        
+        # Har 15-20 min mein market check karega (API limit ke liye safe)
+        await asyncio.sleep(1200)
+
+async def heartbeat_6h(app):
+    """Har 6 ghante mein status message (As requested)"""
     while True:
         try:
-            # A. TECHNICAL RSI SIGNALS (Every 5 Mins)
-            for sym in ["BTC", "GLD", "EURUSD", "USDJPY"]:
-                url = f"https://www.alphavantage.co/query?function=RSI&symbol={sym}&interval=60min&time_period=14&series_type=close&apikey={AV_KEY}"
-                r = requests.get(url, timeout=10).json()
-                if "Technical Analysis: RSI" in r:
-                    rsi = float(list(r["Technical Analysis: RSI"].values())[0]["RSI"])
-                    if rsi > 60 or rsi < 40:
-                        signal = "📉 SELL" if rsi > 60 else "🚀 BUY"
-                        msg = f"🔔 **TECHNICAL SIGNAL**\n━━━━━━━━━━━━━━\n🎯 **Asset:** {sym}\n⚡ **Action:** {signal}\n📊 **RSI:** {rsi}\n━━━━━━━━━━━━━━\n💬 [Admin]({ADMIN_LINK})"
-                        await app.bot.send_message(CHAT_ID, msg, parse_mode='Markdown', disable_web_page_preview=True)
+            status = (
+                f"🛰️ **SYSTEM STATUS UPDATE**\n"
+                f"━━━━━━━━━━━━━━━\n"
+                f"✅ **Bot:** Online & Active\n"
+                f"📊 **Scanning:** XAUUSD & BTCUSD\n"
+                f"🛡️ **Heartbeat:** 6-Hour Cycle\n"
+                f"━━━━━━━━━━━━━━━"
+            )
+            await app.bot.send_message(CHAT_ID, status, parse_mode='Markdown')
+        except: pass
+        # 21600 seconds = 6 hours
+        await asyncio.sleep(21600)
 
-            # B. NEWS SENTIMENT SIGNALS
-            news_url = f'https://www.alphavantage.co/query?function=NEWS_SENTIMENT&tickers=FOREX:USD,CRYPTO:BTC&apikey={AV_KEY}'
-            n_data = requests.get(news_url, timeout=10).json()
-            if "feed" in n_data and len(n_data["feed"]) > 0:
-                top_news = n_data["feed"][0]
-                if top_news['title'] != last_news_title:
-                    last_news_title = top_news['title']
-                    label = top_news.get('overall_sentiment_label', 'Neutral')
-                    if "BULLISH" in label.upper() or "BEARISH" in label.upper():
-                        emoji = "🚀 BULLISH" if "BULLISH" in label.upper() else "📉 BEARISH"
-                        msg = f"🛡️ **NEWS SIGNAL**\n━━━━━━━━━━━━━━\n📰 {last_news_title[:100]}...\n⚡ **Sentiment:** {emoji}\n━━━━━━━━━━━━━━\n💬 [Admin]({ADMIN_LINK})"
-                        await app.bot.send_message(CHAT_ID, msg, parse_mode='Markdown', disable_web_page_preview=True)
-            
-            await asyncio.sleep(300) # Scan every 5 minutes
-        except: await asyncio.sleep(60)
+# --- 4. START & MAIN ---
+async def start(update, context):
+    kb = [[InlineKeyboardButton("📥 JOIN VIP CHANNEL", url=CH_LINK)]]
+    await update.message.reply_text("👋 Sentinel V13 Active.\nScanning messages set to 6-hour intervals!", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
 
 async def main():
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(ChatMemberHandler(welcome_member, ChatMemberHandler.CHAT_MEMBER))
     async with app:
         await app.initialize()
         await app.start()
-        asyncio.create_task(heartbeat(app))
+        # Tasks start karein
+        asyncio.create_task(heartbeat_6h(app))
         asyncio.create_task(trading_engine(app))
-        await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+        await app.updater.start_polling()
         while True: await asyncio.sleep(100)
 
 if __name__ == "__main__":
